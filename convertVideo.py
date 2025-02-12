@@ -10,7 +10,8 @@ def FrameCapture(path):
   
     # Path to video file 
     vidObj = cv2.VideoCapture(path) 
-  
+    frames = "frames"
+    os.makedirs(frames, exist_ok=True)
     # Used as counter variable 
     count = 0
   
@@ -24,7 +25,7 @@ def FrameCapture(path):
         success, image = vidObj.read() 
   
         # Saves the frames with frame-count 
-        cv2.imwrite("frame%d.jpg" % count, image) 
+        cv2.imwrite(os.path.join(frames, "frame%d.jpg" % count), image) 
   
         count += 1
   
