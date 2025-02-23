@@ -1,141 +1,87 @@
 import os
 import cv2
 import numpy as np
-from time import time
+from glob import glob
 
+# run second 
 
+# find the center of a frame
+def find_center(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # apply threshold to isolate planet
+    _, thresh = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
+    
+    # find contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if len(contours) == 0:
+        return None  
 
-# Align and stack images with ECC method
-# Slower but more accurate
-def stackImagesECC(file_list):
-    M = np.eye(3, 3, dtype=np.float32)
+    # find largest contour in frame
+    c = max(contours, key=cv2.contourArea)
+    M = cv2.moments(c)
 
-    first_image = None
-    stacked_image = None
+    if M["m00"] == 0:
+        return None  
 
-    for file in file_list:
-        image = cv2.imread(file,1).astype(np.float32) / 255
-        print(file)
-        if first_image is None:
-            # convert to gray scale floating point image
-            first_image = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
-            stacked_image = image
-        else:
-            # Estimate perspective transform
-            s, M = cv2.findTransformECC(cv2.cvtColor(image,cv2.COLOR_BGR2GRAY), first_image, M, cv2.MOTION_HOMOGRAPHY)
-            w, h, _ = image.shape
-            # Align image to first image
-            image = cv2.warpPerspective(image, M, (h, w))
-            stacked_image += image
+    # find contour center
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
+    
+    return (cx, cy)
 
-    stacked_image /= len(file_list)
-    stacked_image = (stacked_image*255).astype(np.uint8)
-    return stacked_image
+# shift frames
+def shift_image(image, shift_x, shift_y):
+    M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    shifted_image = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]))
+    return shifted_image
 
+# stack frames
+def stack_frames(image_folder, output_file):
+    files = sorted(glob(os.path.join(image_folder, "*.jpg")))  
+    if len(files) == 0:
+        print("No images found!")
+        return
+    
+    print(f"Processing {len(files)} frames...")
 
-# Align and stack images by matching ORB keypoints
-# Faster but less accurate
-def stackImagesKeypointMatching(file_list):
+    # use first frame as reference to be stacked
+    base_img = cv2.imread(files[0])
+    base_center = find_center(base_img)
+    
+    if base_center is None:
+        print("Error: Couldn't detect planet in the first frame!")
+        return
+    
+    stacked_image = np.float32(base_img) / 255  
+    
+    for file in files[1:]:
+        img = cv2.imread(file)
+        center = find_center(img)
 
-    orb = cv2.ORB_create()
+        if center is None:
+            print(f"Skipping {file}")
+            continue
 
-    # disable OpenCL to because of bug in ORB in OpenCV 3.1
-    cv2.ocl.setUseOpenCL(False)
+        shift_x = base_center[0] - center[0]
+        shift_y = base_center[1] - center[1]
+        
+        # align image
+        aligned_img = shift_image(img, shift_x, shift_y)
+        stacked_image += np.float32(aligned_img) / 255
 
-    stacked_image = None
-    first_image = None
-    first_kp = None
-    first_des = None
-    for file in file_list:
-        print(file)
-        image = cv2.imread(file,1)
-        imageF = image.astype(np.float32) / 255
+    # find average stack
+    stacked_image /= len(files)
+    stacked_image = (stacked_image * 255).astype(np.uint8)
 
-        # compute the descriptors with ORB
-        kp = orb.detect(image, None)
-        kp, des = orb.compute(image, kp)
+    # save image
+    cv2.imwrite(output_path, stacked_image)
+    print(f"Saved stacked image to {output_file}")
 
-        # create BFMatcher object
-        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-
-        if first_image is None:
-            # Save keypoints for first image
-            stacked_image = imageF
-            first_image = image
-            first_kp = kp
-            first_des = des
-        else:
-             # Find matches and sort them in the order of their distance
-            matches = matcher.match(first_des, des)
-            matches = sorted(matches, key=lambda x: x.distance)
-
-            src_pts = np.float32(
-                [first_kp[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-            dst_pts = np.float32(
-                [kp[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-
-            # Estimate perspective transformation
-            M, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
-            w, h, _ = imageF.shape
-            imageF = cv2.warpPerspective(imageF, M, (h, w))
-            stacked_image += imageF
-
-    stacked_image /= len(file_list)
-    stacked_image = (stacked_image*255).astype(np.uint8)
-    return stacked_image
-
-# ===== MAIN =====
-# Read all files in directory
-import argparse
-
-
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser(description='')
-    parser.add_argument('input_dir', help='Input directory of images ()')
-    parser.add_argument('output_image', help='Output image name')
-    parser.add_argument('--method', help='Stacking method ORB (faster) or ECC (more precise)')
-    parser.add_argument('--show', help='Show result image',action='store_true')
-    args = parser.parse_args()
-
-    image_folder = args.input_dir
-    if not os.path.exists(image_folder):
-        print("ERROR {} not found!".format(image_folder))
-        exit()
-
-    file_list = os.listdir(image_folder)
-    file_list = [os.path.join(image_folder, x)
-                 for x in file_list if x.endswith(('.jpg', '.png','.bmp'))]
-
-    if args.method is not None:
-        method = str(args.method)
-    else:
-        method = 'KP'
-
-    tic = time()
-
-    if method == 'ECC':
-        # Stack images using ECC method
-        description = "Stacking images using ECC method"
-        print(description)
-        stacked_image = stackImagesECC(file_list)
-
-    elif method == 'ORB':
-        #Stack images using ORB keypoint method
-        description = "Stacking images using ORB method"
-        print(description)
-        stacked_image = stackImagesKeypointMatching(file_list)
-
-    else:
-        print("ERROR: method {} not found!".format(method))
-        exit()
-
-    print("Stacked {0} in {1} seconds".format(len(file_list), (time()-tic) ))
-
-    print("Saved {}".format(args.output_image))
-    cv2.imwrite(str(args.output_image),stacked_image)
-
-    # Show image
-    if args.show:
-        cv2.imshow(description, stacked_image)
-        cv2.waitKey(0)
+image_folder = "frames"  
+output_folder = "stacked_images"
+os.makedirs(output_folder, exist_ok=True)
+output_file = "stacked_jupiter.png" #change for other planets
+output_path = os.path.join(output_folder, output_file)
+stack_frames(image_folder, output_file)

@@ -1,7 +1,8 @@
+# code from GeeksForGeeks, adjusted for planetary program
+# https://www.geeksforgeeks.org/python-program-extract-frames-using-opencv/
 
-# Program To Read video 
-# and Extract Frames 
-  
+# run first 
+
 import cv2 
 import os
 
@@ -32,6 +33,6 @@ def FrameCapture(path):
   
 # Driver Code 
 if __name__ == '__main__': 
-    pathie = os.path.join("videos", "IMG_5729.mov")
+    video_path = os.path.join("videos", "IMG_5729.mov") #change for different videos
     # Calling the function 
-    FrameCapture(pathie) 
+    FrameCapture(video_path) 
