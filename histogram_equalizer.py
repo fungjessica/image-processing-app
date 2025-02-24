@@ -9,7 +9,7 @@ def enhance_contrast(image):
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)  
     l, a, b = cv2.split(lab)
 
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     l = clahe.apply(l)
 
     enhanced = cv2.merge((l, a, b))
